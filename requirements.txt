@@ -1,0 +1,10 @@
+simpletransformers==0.70.1
+torch>=2.0.0
+pandas>=2.0.0
+scikit-learn>=1.0.0
+numpy>=1.20.0
+transformers>=4.31.0
+tqdm>=4.47.0
+tensorboard>=2.0.0
+tensorboardx>=2.0
+seqeval>=1.2.2 
