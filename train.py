@@ -5,6 +5,8 @@ import pandas as pd
 from simpletransformers.ner import NERModel, NERArgs
 import torch
 from transformers import AutoTokenizer
+import requests
+from urllib.parse import urlparse
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +21,46 @@ def load_data(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data
+
+# 从HTTP链接加载数据
+def load_data_from_url(url):
+    """
+    从HTTP链接加载JSON数据
+    
+    Args:
+        url (str): 指向JSON数据的HTTP链接
+        
+    Returns:
+        list: 加载的数据
+        
+    Raises:
+        Exception: 如果请求失败或数据格式不正确
+    """
+    try:
+        # 检查URL是否有效
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            raise ValueError(f"无效的URL: {url}")
+        
+        # 发送HTTP请求
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()  # 如果请求失败，抛出异常
+        
+        # 尝试解析JSON数据
+        data = response.json()
+        
+        print(f"成功从 {url} 加载了数据")
+        return data
+    
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP请求错误: {e}")
+        raise
+    except json.JSONDecodeError as e:
+        print(f"JSON解析错误: {e}")
+        raise
+    except Exception as e:
+        print(f"加载数据时出错: {e}")
+        raise
 
 # 将数据转换为NER模型所需的格式，使用分词器处理
 def convert_to_ner_format(data, print_data=False):
@@ -115,8 +157,18 @@ def convert_to_ner_format(data, print_data=False):
 
 # 主函数
 def main():
-    # 加载数据 - 使用新生成的数据
-    data = load_data('data/anime_ner_training_data.json')
+    import argparse
+    parser = argparse.ArgumentParser(description='训练动漫文件名实体识别模型')
+    parser.add_argument('--data_path', type=str, default='data/train_data2.json', help='训练数据文件路径')
+    parser.add_argument('--data_url', type=str, help='训练数据HTTP链接')
+    args = parser.parse_args()
+    
+    # 加载数据 - 优先使用URL，如果提供了的话
+    if args.data_url:
+        data = load_data_from_url(args.data_url)
+    else:
+        data = load_data(args.data_path)
+    
     print(f"加载了 {len(data)} 条训练数据")
     
     # 转换数据格式
@@ -161,7 +213,7 @@ def main():
     # 使用多语言预训练模型
     model = NERModel(
         "bert", 
-        "bert-base-multilingual-cased",
+        "hfl/chinese-macbert-base",
         args=model_args,
         labels=["O", "B-TITLE", "I-TITLE", "B-GROUP", "I-GROUP", "B-EP", "I-EP", 
                 "B-SEASON", "I-SEASON", "B-RES", "I-RES", "B-LANG", "I-LANG"],

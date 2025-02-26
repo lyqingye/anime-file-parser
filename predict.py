@@ -5,6 +5,8 @@ import pandas as pd
 from simpletransformers.ner import NERModel, NERArgs
 import torch
 from transformers import AutoTokenizer
+import requests
+from urllib.parse import urlparse
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +39,47 @@ def tokenize_filename(filename):
     tokens = [token for token in filename.split() if token]
     
     return tokens
+
+# 从HTTP链接加载数据
+def load_data_from_url(url):
+    """
+    从HTTP链接加载JSON数据
+    
+    Args:
+        url (str): 指向JSON数据的HTTP链接
+        
+    Returns:
+        list: 加载的数据
+        
+    Raises:
+        Exception: 如果请求失败或数据格式不正确
+    """
+    try:
+        # 检查URL是否有效
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            raise ValueError(f"无效的URL: {url}")
+        
+        # 发送HTTP请求
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()  # 如果请求失败，抛出异常
+        
+        # 尝试解析JSON数据
+        data = response.json()
+        
+        print(f"成功从 {url} 加载了数据")
+        return data
+    
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP请求错误: {e}")
+        raise
+    except json.JSONDecodeError as e:
+        print(f"JSON解析错误: {e}")
+        raise
+    except Exception as e:
+        print(f"加载数据时出错: {e}")
+        raise
+
 # 加载模型
 model = NERModel(
     "bert",
@@ -148,20 +191,75 @@ def process_file(input_file, output_file):
     print(f"结果已保存到 {output_file}")
     return results
 
+def process_url(url, output_file):
+    """
+    处理从URL加载的文件名列表，并将结果保存为JSON文件
+    
+    Args:
+        url (str): 指向JSON数据的HTTP链接，数据应为文件名列表
+        output_file (str): 输出JSON文件路径
+    """
+    # 从URL加载数据
+    data = load_data_from_url(url)
+    
+    # 确保数据是列表格式
+    if isinstance(data, dict) and "filenames" in data:
+        filenames = data["filenames"]
+    elif isinstance(data, list):
+        filenames = data
+    else:
+        raise ValueError("URL返回的数据格式不正确，应为文件名列表或包含filenames字段的对象")
+    
+    results = []
+    print(f"从URL加载了 {len(filenames)} 个文件名")
+    
+    # 处理每个文件名
+    for i, filename in enumerate(filenames):
+        if not isinstance(filename, str):
+            print(f"跳过非字符串项: {filename}")
+            continue
+            
+        print(f"处理第 {i+1}/{len(filenames)} 个文件名: {filename}")
+        
+        # 预测
+        tokens = tokenize_filename(filename)
+        predictions, _ = model.predict([" ".join(tokens)])
+        
+        # 处理预测结果
+        processed_result = process_predictions(predictions)
+        
+        # 添加到结果列表
+        results.append({
+            "original_filename": filename,
+            "parsed_result": processed_result
+        })
+    
+    # 保存为JSON文件
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    
+    print(f"结果已保存到 {output_file}")
+    return results
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='预测动漫文件名中的实体')
     parser.add_argument('--text', type=str, help='要预测的文件名')
     parser.add_argument('--input_file', type=str, help='输入文件路径，每行一个文件名')
+    parser.add_argument('--input_url', type=str, help='输入数据的HTTP链接')
     parser.add_argument('--output_file', type=str, default='parsed_results.json', help='输出JSON文件路径')
     args = parser.parse_args()
     
-    if args.input_file:
+    if args.input_url:
+        # 处理URL
+        process_url(args.input_url, args.output_file)
+    elif args.input_file:
         # 处理文件
         process_file(args.input_file, args.output_file)
     elif args.text:
         # 处理单个文件名
-        predictions, _ = model.predict([args.text])
+        tokens = tokenize_filename(args.text)
+        predictions, _ = model.predict([" ".join(tokens)])
         
         # 打印原始预测结果
         print("原始预测结果:")
@@ -172,4 +270,4 @@ if __name__ == "__main__":
         print("\nJSON格式结果:")
         print(json.dumps(processed_result, ensure_ascii=False, indent=2))
     else:
-        parser.error("请提供 --text 或 --input_file 参数")
+        parser.error("请提供 --text、--input_file 或 --input_url 参数")
